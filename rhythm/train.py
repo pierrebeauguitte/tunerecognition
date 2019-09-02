@@ -9,8 +9,7 @@ import os
 import pickle
 from math import sqrt, log
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import confusion_matrix, brier_score_loss, balanced_accuracy_score
-from sklearn.calibration import calibration_curve, CalibratedClassifierCV
+from sklearn.metrics import confusion_matrix
 
 def printConfMat(cm, tunecm, labels, transpose=False, normalise=False):
 
@@ -180,25 +179,7 @@ def doSplits():
         for i in range(1, 501):
             outfile.write('%03d,%d\n' % (i, folds[i]))
 
-def getScores(fy, fp, ft, wLen):
-    tindices = np.array(ft)
-    indices = set(ft)
-    globalRes = []
-    for i in indices:
-        loc = np.where(tindices == i)[0]
-        res = []
-        for w in range(len(loc) - wLen + 1):
-            score = 0
-            avgProbs = []
-            for t in range(wLen):
-                if (fy[loc[w+t]] == fp[loc[w+t]]):
-                    score += 1
-            score /= float(wLen)
-            res.append( 1 if (score > 0.5) else 0 )
-        globalRes.extend(res)
-    return globalRes
-
-def getScores2(fy, fp, ft, wLen, model):
+def getScores(fy, fp, ft, wLen, model):
     tindices = np.array(ft)
     indices = set(ft)
     globalRes = []
@@ -234,10 +215,10 @@ def prepareTrainAndTest(path, referenceFile, modelType):
     t, ref = loadReference(referenceFile, modelType)
     t2, ref2 = loadReference(referenceFile, 'multinomial')
 
-    # # unnecessarily rewritten every time, but no harm done
-    # with open('ref_%s.csv' % modelType, 'w') as refFile:
-    #     for tune in range(1, 501):
-    #         refFile.write('%d,%s\n' % (tune, ref[tune]))
+    # unnecessarily rewritten every time, but no harm done
+    with open('ref_%s.csv' % modelType, 'w') as refFile:
+        for tune in range(1, 501):
+            refFile.write('%d,%s\n' % (tune, ref[tune]))
 
     X, Y, names, minN = prepareSets(path, ref)
     Ynp = np.array(Y)
@@ -252,9 +233,9 @@ def prepareTrainAndTest(path, referenceFile, modelType):
             for c in splits[a][b]:
                 folds[c] = b
 
-    # with open('folds_%s.csv' % modelType, 'w') as outfile:
-    #     for i in range(1, 501):
-    #         outfile.write('%03d, %d\n' % (i, folds[i]))    
+    with open('folds_%s.csv' % modelType, 'w') as outfile:
+        for i in range(1, 501):
+            outfile.write('%03d, %d\n' % (i, folds[i]))
 
     print 'Starting cross-validation'
 
@@ -277,12 +258,6 @@ def prepareTrainAndTest(path, referenceFile, modelType):
         'other44': [],
         'waltz': []
     }
-
-    test_y_concat = []
-    pred_concat = []
-    probas_concat = []
-    sig_probas_concat = []
-    gt_concat = []
 
     for i in range(nFolds):
         print 'Fold %d' % i
@@ -311,13 +286,10 @@ def prepareTrainAndTest(path, referenceFile, modelType):
         score = logreg.score(test_x, test_y)
         print 'Accuracy on test set: %.3f' % score
 
-        # with open('models/%s_%d.pcl' % (modelType, i), 'w') as modFile:
-        #     pickle.dump(logreg, modFile)
+        with open('models/%s_%d.pcl' % (modelType, i), 'w') as modFile:
+            pickle.dump(logreg, modFile)
 
         prediction = logreg.predict(test_x)
-
-        print 'balanced: %.3f' % (balanced_accuracy_score(test_y, prediction))
-
         prediction_proba = logreg.predict_proba(test_x)
 
         cm = confusion_matrix(test_y, prediction,
@@ -329,8 +301,7 @@ def prepareTrainAndTest(path, referenceFile, modelType):
                 predPerType[ref2[test_t[ind]]].append(prediction[ind])
 
         for r in wLens:
-            # finalRes[r].extend(getScores(test_y, prediction, test_t, r))
-            finalRes[r].extend(getScores2(test_y, prediction_proba, test_t, r, logreg))
+            finalRes[r].extend(getScores(test_y, prediction_proba, test_t, r, logreg))
 
         tuneRes = {}
         tindices = np.array(test_t)
@@ -351,93 +322,9 @@ def prepareTrainAndTest(path, referenceFile, modelType):
             if index_p != index_ref:
                 tuneErrors[k] = tuneRes[k]
 
-
-        pred_concat.extend(prediction)
-        gt_concat.extend(test_y)
-
         binClasses = ['hornpipe', 'jig', 'other44', 'polka',
               'reel', 'slide', 'slipjig', 'waltz'] if modelType == "multinomial" \
               else ['compound', 'simple']
-
-        # for chunk in range(len(test_y)):
-        #     test_y_concat.append(1 if test_y[chunk] == prediction[chunk] else 0)
-        #     probas_concat.append(prediction_proba[chunk][binClasses.index(test_y[chunk])])
-
-        test_y_concat.extend(test_y)
-        # print prediction_proba[:,1].shape
-        # sys.exit(0)
-        probas_concat.extend(prediction_proba[:,1])
-
-        # sigmoid = CalibratedClassifierCV(logreg, cv=3, method='isotonic')
-        # sigmoid.fit(train_x, train_y)
-        # sig_proba = sigmoid.predict_proba(test_x)
-        # sig_probas_concat.extend(sig_proba[:,1])
-
-        # tune_prediction = {}
-        # for p in range(len(test_x)):
-        #     tune_id = test_t[p]
-        #     if tune_id not in tune_prediction:
-        #         tune_prediction[tune_id] = dict.fromkeys(labels, 0)
-        #     tune_prediction[tune_id][prediction[p]] += 1
-        # for k in tune_prediction:
-        #     p = max(tune_prediction[k].iteritems(), key = lambda x: x[1])[0]
-        #     index_p = labels.index(p)
-        #     index_ref = labels.index(ref[k])
-        #     tuneConfMat[ index_ref, index_p ] += 1
-        #     if index_p != index_ref:
-        #         tuneErrors[k] = p
-
-    clf_score = brier_score_loss(test_y_concat,probas_concat,
-                                 pos_label = 'simple' if modelType == 'binomial' else 'jig')
-    print "\tBrier logreg: %1.3f" % (clf_score)
-
-    fop = []
-    mpv = []
-
-    for f in [lambda x: x,
-              lambda x: sqrt(x),
-              lambda x: (2*x-x**2),
-              lambda x: sqrt(2*x-x**2)]:
-        print '\t> %.3f' % brier_score_loss(test_y_concat,
-                                            map(f, probas_concat),
-                                            pos_label = 'simple' if modelType == 'binomial' else 'jig')
-        fraction_of_positives, mean_predicted_value = \
-            calibration_curve(test_y_concat, probas_concat, n_bins=10)
-        fop.append(fraction_of_positives)
-        mpv.append(mean_predicted_value)
-
-    # clf_score = brier_score_loss(test_y_concat,sig_probas_concat,
-    #                              pos_label = 'simple' if modelType == 'binomial' else 'jig')
-    # print "\tBrier sigmoid: %1.3f" % (clf_score)
-
-    if modelType == 'binomial':
-        # fraction_of_positives, mean_predicted_value = \
-        #     calibration_curve(test_y_concat, probas_concat, n_bins=10)
-
-        # fraction_of_positives_sig, mean_predicted_value_sig = \
-        #     calibration_curve(test_y_concat, sig_probas_concat, n_bins=10)
-
-        plt.figure(figsize=(5, 8))
-        plt.subplot(211)
-        plt.plot([0, 1], [0, 1], "k:", label="Perfectly calibrated")
-        for i in range(4):
-            plt.plot(mpv[i], fop[i], "s-", label="LogReg")
-        plt.ylabel("Fraction of positives")
-        plt.ylim([-0.05, 1.05])
-        plt.legend(loc="lower right")
-        plt.title('Calibration plots  (reliability curve)')
-
-        # plt.plot(mean_predicted_value_sig, fraction_of_positives_sig, "s-", label="LogReg+sig")
-        plt.subplot(212)
-        plt.hist(probas_concat, range=(0, 1), bins=10, label="LogReg", histtype="step", lw=2)
-        plt.xlabel("Mean predicted value")
-        plt.ylabel("Count")
-        # plt.hist(sig_probas_concat, range=(0, 1), bins=10, label="LogReg+sig", histtype="step", lw=2)
-        # plt.savefig("figures/calibration.pdf", bbox_inches='tight')
-        plt.show()
-        # sys.exit(0)
-        
-    print 'Overall Balanced Acc: %.3f' % (balanced_accuracy_score(gt_concat, pred_concat) * 100.)
 
     print 'Frame accuracy: %.2f%%' % (100. * np.trace(confMat) / np.sum(confMat))
 
@@ -469,7 +356,6 @@ def prepareTrainAndTest(path, referenceFile, modelType):
     plotValues = []
     for r in wLens:
         plotValues.append(100. * sum(finalRes[r]) / float(len(finalRes[r])))
-
     
     print "Highest span acc [%d]: %.2f" % (len(plotValues), plotValues[-1])
 
@@ -633,12 +519,12 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.modelType == 'binomial' or args.modelType == 'multinomial':
-        np.random.seed(1564)
+        np.random.seed(1764895)
     else:
         print 'modelType should be \'binomial\' or \'multinomial\''
         sys.exit(1)
 
     doSplits()
     prepareTrainAndTest('data', '../dataset.csv', args.modelType)
-    # prepareTrainAndTestOnHalf('data', '../dataset.csv', args.modelType)
-    # trainFinalModel('data', '../dataset.csv', args.modelType)
+    prepareTrainAndTestOnHalf('data', '../dataset.csv', args.modelType)
+    trainFinalModel('data', '../dataset.csv', args.modelType)
